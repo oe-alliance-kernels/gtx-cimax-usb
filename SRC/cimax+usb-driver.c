@@ -1653,6 +1653,13 @@ int cimax_usb_select_interface(struct device_s *device, unsigned long intf)
 		return -EINVAL;
 	} /* if */
 
+	/* An alternate setting can have no CI pipes or only one TS pipe. */
+	if (!device->usbdev->ep_out[DEVICE_BULK_OUT_PIPE] ||
+	    !device->usbdev->ep_in[DEVICE_INT_IN_PIPE] ||
+	    (device->usbdev->ep_out[DEVICE_TS_OUT_PIPE] &&
+	     !device->usbdev->ep_out[DEVICE_TS_OUT_PIPE + 1]))
+		return -ENODEV;
+
 	/* check endpoints */
 	/* CI bulk out */
 	if (!usb_endpoint_is_bulk_out(
@@ -2255,8 +2262,34 @@ static ssize_t ts_configured_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(ts_configured);
 
+static ssize_t cam_contacts_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct usb_interface *intf = to_usb_interface(dev);
+	struct device_s *device = usb_get_intfdata(intf);
+	u8 a = 0, b = 0;
+	int ret;
+
+	if (!device)
+		return -ENODEV;
+	mutex_lock(&device->lock);
+	if (device->opened || intf->cur_altsetting->desc.bAlternateSetting != 1) {
+		ret = -EBUSY;
+	} else {
+		ret = usb_getbyte(device, 0x0207, &a);
+		if (!ret)
+			ret = usb_getbyte(device, 0x0208, &b);
+		if (!ret)
+			ret = sysfs_emit(buf, "A=%u B=%u\n", a & 1, b & 1);
+	}
+	mutex_unlock(&device->lock);
+	return ret;
+}
+static DEVICE_ATTR_RO(cam_contacts);
+
 static struct attribute *ts_profile_attrs[] = {
 	&dev_attr_ts_configured.attr,
+	&dev_attr_cam_contacts.attr,
 	NULL,
 };
 
@@ -2343,8 +2376,10 @@ static int device_probe(struct usb_interface *intf,
 		info("start cfg download");
 		if (cimaxusb_configuration_setting(device) < 0)
 			err(" Error : set CIMaX+ configuration");
-		else if (devm_device_add_group(&intf->dev, &ts_profile_group))
+		else if (device_add_group(&intf->dev, &ts_profile_group))
 			dev_warn(&intf->dev, "unable to publish board profile status\n");
+		else
+			device->profile_attrs_added = true;
 		info("end cfg download");
 
 		if (cimax_usb_dev_add)
@@ -2365,6 +2400,8 @@ static void device_disconnect(struct usb_interface *intf)
 	if (!device)
 		return;
 
+	if (device->profile_attrs_added)
+		device_remove_group(&intf->dev, &ts_profile_group);
 	mutex_lock(&device->lock);
 	if (device->opened) {
 		/* release blocking functions */

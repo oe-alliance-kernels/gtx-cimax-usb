@@ -152,7 +152,7 @@ int usb_getbyte(struct device_s *bus_adap,
 {
 	unsigned char cmd[4];
 	unsigned char *buf;
-	int len;
+	int len, attempt;
 	struct usb_device *dev = bus_adap->usbdev;
 
 	cmd[0] = 0xFF;
@@ -170,31 +170,28 @@ int usb_getbyte(struct device_s *bus_adap,
 			return -ENOMEM;
 		}
 
-		while ((len = bus_adap->ops->read_ep5_message(dev, buf, 256))
-				>= 0) {
-			if (len == 0)
-				continue;
-			/*pr_debug("%s-%s: 0x%x\n",
-				DRIVER_NAME, __func__,buf[0]);*/
-			if ((len == 5) && ((buf[0] & 0x7f) == 0x45))
-				continue;
-			if (len >= 5) {
-				*val = buf[4];
+		for (attempt = 0; attempt < 8; attempt++) {
+			len = bus_adap->ops->read_ep5_message(dev, buf, 256);
+			if (len < 0)
 				break;
-			} else {
-				pr_err("%s-%s: failed to read addr 0x%x\n",
-					DRIVER_NAME, __func__, addr);
+			if (!len || (len == 5 && (buf[0] & 0x7f) == 0x45))
+				continue;
+			if (len == 5 && buf[0] == 0x4c && buf[1] == cmd[1] &&
+			    buf[2] == cmd[2] && buf[3] == 1) {
+				*val = buf[4];
 				kfree(buf);
-				return -1;
+				return 0;
 			}
+			len = -EIO;
+			break;
 		}
+		kfree(buf);
+		return len < 0 ? len : -ETIMEDOUT;
 	} else {
 		pr_err("%s-%s: failed to read addr 0x%x\n",
 			DRIVER_NAME, __func__, addr);
 		return -1;
 	}
-	kfree(buf);
-	return 0;
 }
 
 /******************************************************************************

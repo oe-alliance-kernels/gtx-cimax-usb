@@ -333,6 +333,7 @@ struct ts_channel_s {
 };
 
 struct device_s {
+	bool profile_attrs_added;
 	struct mutex       lock;
 	struct usb_device  *usbdev;
 	__u8               opened;

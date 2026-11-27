@@ -58,6 +58,7 @@
  * @return
  *   None.
  ******************************************************************************/
+int usb_getbyte(struct device_s *bus_adap, unsigned int addr, unsigned char *val);
 int cimaxusb_configuration_setting(struct device_s *bus_adap);
 
 #endif
