@@ -334,6 +334,7 @@ struct ts_channel_s {
 
 struct device_s {
 	bool profile_attrs_added;
+	struct gtx_ci *ci_slot;
 	struct mutex       lock;
 	struct usb_device  *usbdev;
 	__u8               opened;
@@ -358,6 +359,10 @@ int cimax_usb_ci_write(struct device_s *device,
 		u8 *txData, int txSize, u8 *rxData, int rxSize);
 int cimax_usb_ci_read_evt(struct device_s *device,
 		int moduleId, u8 *buf, int size);
+
+int gtx_ci_attach(struct device_s *usb);
+void gtx_ci_detach(struct device_s *usb);
+ssize_t gtx_ci_contacts(struct device_s *usb, char *buf);
 
 int cimax_usb_device_unlock_read(struct device_s *device);
 int cimax_usb_device_open(struct device_s *device);

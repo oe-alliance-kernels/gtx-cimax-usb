@@ -1,0 +1,2 @@
+obj-m += gtx_cimax_usb.o
+gtx_cimax_usb-y := cimax+usb-driver.o cimax+usb_fw.o cimax+usb_config.o gtx-ci-slot.o

@@ -1533,6 +1533,11 @@ static int device_drv_open(struct device_s *device)
 		return -ENODEV;
 	}
 
+	if (device->ci_slot) {
+		mutex_unlock(&device->lock);
+		return -EBUSY;
+	}
+
 	if (device->opened) {
 		mutex_unlock(&device->lock);
 		device->opened++;
@@ -2273,7 +2278,9 @@ static ssize_t cam_contacts_show(struct device *dev,
 	if (!device)
 		return -ENODEV;
 	mutex_lock(&device->lock);
-	if (device->opened || intf->cur_altsetting->desc.bAlternateSetting != 1) {
+	if (device->ci_slot) {
+		ret = gtx_ci_contacts(device, buf);
+	} else if (device->opened || intf->cur_altsetting->desc.bAlternateSetting != 1) {
 		ret = -EBUSY;
 	} else {
 		ret = usb_getbyte(device, 0x0207, &a);
@@ -2378,8 +2385,14 @@ static int device_probe(struct usb_interface *intf,
 			err(" Error : set CIMaX+ configuration");
 		else if (device_add_group(&intf->dev, &ts_profile_group))
 			dev_warn(&intf->dev, "unable to publish board profile status\n");
-		else
+		else {
+			int ret;
+
 			device->profile_attrs_added = true;
+			ret = gtx_ci_attach(device);
+			if (ret)
+				dev_warn(&intf->dev, "CI slot registration failed: %d\n", ret);
+		}
 		info("end cfg download");
 
 		if (cimax_usb_dev_add)
@@ -2400,6 +2413,7 @@ static void device_disconnect(struct usb_interface *intf)
 	if (!device)
 		return;
 
+	gtx_ci_detach(device);
 	if (device->profile_attrs_added)
 		device_remove_group(&intf->dev, &ts_profile_group);
 	mutex_lock(&device->lock);
