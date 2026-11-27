@@ -2248,6 +2248,22 @@ void cimax_usb_set_cb(void *cb1, void *cb2)
 }
 EXPORT_SYMBOL(cimax_usb_set_cb);
 
+static ssize_t ts_configured_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "1\n");
+}
+static DEVICE_ATTR_RO(ts_configured);
+
+static struct attribute *ts_profile_attrs[] = {
+	&dev_attr_ts_configured.attr,
+	NULL,
+};
+
+static const struct attribute_group ts_profile_group = {
+	.attrs = ts_profile_attrs,
+};
+
 static int device_probe(struct usb_interface *intf,
 		const struct usb_device_id *id)
 {
@@ -2327,6 +2343,8 @@ static int device_probe(struct usb_interface *intf,
 		info("start cfg download");
 		if (cimaxusb_configuration_setting(device) < 0)
 			err(" Error : set CIMaX+ configuration");
+		else if (devm_device_add_group(&intf->dev, &ts_profile_group))
+			dev_warn(&intf->dev, "unable to publish board profile status\n");
 		info("end cfg download");
 
 		if (cimax_usb_dev_add)
