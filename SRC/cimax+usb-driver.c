@@ -88,7 +88,6 @@ static struct device_s *gdevice;
 static unsigned int gdeviceNumber;
 
 static struct usb_driver device_driver;
-static struct timespec gStart;
 
 static __u8 nullHeader[] = {
 	0x47, 0x1F, 0xFF, 0x1F, 0xFA, 0xDE, 0xBA, 0xBE
@@ -1620,8 +1619,6 @@ static int device_open(struct inode *inode, struct file *file)
 	}
 	device = &gdevice[gdeviceNumber];
 	/*gdeviceNumber++;*/
-
-	ktime_get_ts(&gStart);
 
 	ret = device_drv_open(device);
 	if (ret < 0)
