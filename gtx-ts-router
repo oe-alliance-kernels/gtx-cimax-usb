@@ -1,0 +1,110 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          gtx-ts-router
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Configure the GTX Combo FTA transport inputs
+### END INIT INFO
+set -eu
+
+case ${1:-start} in
+    start) ;;
+    stop) exit 0 ;;
+    *) echo "Usage: $0 {start|stop}" >&2; exit 2 ;;
+esac
+
+fail() { echo "gtx-ts-router: $*" >&2; exit 1; }
+
+[ -r /proc/device-tree/compatible ] || exit 0
+tr '\000' '\n' < /proc/device-tree/compatible | grep -Fxq 'gtmedia,gtx-combo' || exit 0
+# OpenATV mounts /var/volatile on tmpfs; the USB initramfs uses /run.
+runtime=/run
+[ ! -d /var/volatile/run ] || runtime=/var/volatile/run
+[ ! -e "$runtime/gtx-ts-ready" ] || exit 0
+if ! mkdir "$runtime/gtx-ts-starting" 2>/dev/null; then
+    [ -d "$runtime/gtx-ts-starting" ] || fail "cannot lock $runtime"
+    exit 0
+fi
+trap 'rmdir "$runtime/gtx-ts-starting"' EXIT
+[ ! -e "$runtime/gtx-ts-ready" ] || exit 0
+
+modprobe gtx_frontends
+modprobe aml_hardware_dmx
+for file in cimax+_usbdvb.bin cimax+usb.cfg; do
+    [ -s "/lib/firmware/$file" ] || fail "missing /lib/firmware/$file"
+done
+
+# The soldered CIMaX is behind the first downstream port of the onboard hub.
+find_router() {
+    for port in /sys/bus/usb/devices/*-1.1; do
+        [ "$(cat "$port/idVendor" 2>/dev/null)" = 1b0d ] || continue
+        [ "$(cat "$port/idProduct" 2>/dev/null)" = 2f00 ] || continue
+        echo "$port"
+        return 0
+    done
+    return 1
+}
+
+pulse_reset() {
+    # GPIOC_5 is also an SD signal on other SM1 boards.
+    [ ! -e /sys/bus/platform/devices/ffe05000.sd/driver ] || fail "SD controller owns the GPIOC pins"
+    for chip in /sys/class/gpio/gpiochip*; do
+        [ "$(cat "$chip/label" 2>/dev/null)" = periphs-banks ] || continue
+        [ "$(cat "$chip/ngpio")" -gt 47 ] || fail "GPIOC_5 outside this GPIO chip"
+        number=$(($(cat "$chip/base") + 47))
+        line=/sys/class/gpio/gpio$number
+        if [ ! -d "$line" ]; then
+            echo "$number" > /sys/class/gpio/export || fail "GPIOC_5 unavailable"
+            touch "$runtime/gtx-ts-reset-owned"
+        fi
+        [ -e "$runtime/gtx-ts-reset-owned" ] || fail "GPIOC_5 already in use"
+        echo high > "$line/direction"
+        sleep 0.06
+        echo 0 > "$line/value"
+        return 0
+    done
+    fail "periphs-banks GPIO controller missing"
+}
+
+if ! find_router > /dev/null; then
+    pulse_reset
+fi
+modprobe gtx_cimax_usb
+
+# The boot ROM (0001) re-enumerates as 0000 after firmware download.
+# The runtime driver publishes ts_configured only after applying the board profile.
+attempt=0
+while :; do
+    port=$(find_router) || port=
+    if [ -n "$port" ] && [ "$(cat "$port/bcdDevice" 2>/dev/null)" = 0000 ] &&
+       [ -e "$port:1.0/ts_configured" ]; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -le 15 ] || fail "CIMaX board profile unavailable after 15 seconds"
+    sleep 1
+done
+
+set_route() {
+    attribute=/sys/class/stb/$1
+    [ -w "$attribute" ] || fail "missing $attribute"
+    if [ "$(cat "$attribute")" != "$2" ]; then
+        echo "$2" > "$attribute"
+        [ "$(cat "$attribute")" = "$2" ] || fail "could not select $1=$2"
+    fi
+}
+
+# Set initial hardware routes once. Enigma2 then owns the demux selectors.
+set_route demux0_source ts1
+set_route demux1_source ts0
+set_route source dmx0
+attempt=0
+while [ ! -c /dev/dvb/adapter0/frontend0 ] || [ ! -c /dev/dvb/adapter0/frontend1 ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -le 15 ] || fail "onboard DVB frontends unavailable after 15 seconds"
+    sleep 1
+done
+touch "$runtime/gtx-ts-ready"
+echo "gtx-ts-router: SAT on demux0/ts1, terrestrial/cable on demux1/ts0, source dmx0"
